@@ -1,0 +1,3 @@
+com/fraud/TransactionTest.class
+com/fraud/kafka/TransactionSerializer.class
+com/fraud/model/Transaction.class
