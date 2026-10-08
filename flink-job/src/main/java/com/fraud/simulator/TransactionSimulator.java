@@ -11,6 +11,9 @@ public class TransactionSimulator {
     private static final String BOOTSTRAP_SERVERS = "localhost:9092";
     private static final String TOPIC = "txn.raw";
     private static final Random RANDOM = new Random();
+    private static final int TOTAL_TRANSACTIONS = 100;
+    private static final int TARGET_TPS = 10;
+
 
     private static final String[] CHANNELS = {
             "UPI",
@@ -54,10 +57,13 @@ public class TransactionSimulator {
                 TransactionSerializer.class.getName()
         );
 
+        long delay_millis = 1000L/TARGET_TPS;
+
+
         try (KafkaProducer<String, Transaction> producer =
                      new KafkaProducer<>(properties)) {
 
-            for (int i = 0; i < 10; i++) {
+            for (int i = 0; i < TOTAL_TRANSACTIONS; i++) {
 
                 Transaction txn = generateTransaction();
 
@@ -91,12 +97,21 @@ public class TransactionSimulator {
                             }
                         }
                 );
+
+                try{
+                    Thread.sleep(delay_millis);
+                }catch (Exception e){
+                    Thread.currentThread().interrupt();
+                    break;
+                }
             }
 
             producer.flush();
 
             System.out.println(
-                    "Finished sending 10 transactions."
+                    "Finished sending "
+                            + TOTAL_TRANSACTIONS
+                            + " transactions."
             );
         }
     }
