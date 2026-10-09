@@ -1,6 +1,8 @@
 /Users/lohith/Desktop/projects/dual_path_fraud/flink-job/src/main/java/com/fraud/TransactionTest.java
 /Users/lohith/Desktop/projects/dual_path_fraud/flink-job/src/main/java/com/fraud/flink/FraudFeatureJob.java
+/Users/lohith/Desktop/projects/dual_path_fraud/flink-job/src/main/java/com/fraud/flink/VelocityFeatureFunction.java
 /Users/lohith/Desktop/projects/dual_path_fraud/flink-job/src/main/java/com/fraud/kafka/TransactionProducer.java
 /Users/lohith/Desktop/projects/dual_path_fraud/flink-job/src/main/java/com/fraud/kafka/TransactionSerializer.java
+/Users/lohith/Desktop/projects/dual_path_fraud/flink-job/src/main/java/com/fraud/model/FeatureRow.java
 /Users/lohith/Desktop/projects/dual_path_fraud/flink-job/src/main/java/com/fraud/model/Transaction.java
 /Users/lohith/Desktop/projects/dual_path_fraud/flink-job/src/main/java/com/fraud/simulator/TransactionSimulator.java

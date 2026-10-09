@@ -56,7 +56,7 @@ services:
     ports:
       - "8081:8081"
     volumes:
-      - ../flink-job/target:/opt/flink/usrlib
+      - ../flink-job:/opt/flink/jobs:ro
     environment:
       FLINK_PROPERTIES: "jobmanager.rpc.address: jobmanager"
 
@@ -67,7 +67,7 @@ services:
     depends_on:
       - jobmanager
     volumes:
-      - ../flink-job/target:/opt/flink/usrlib
+      - ../flink-job:/opt/flink/jobs:ro
     environment:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager

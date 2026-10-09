@@ -1,0 +1,41 @@
+
+i
+J
+payer_id+Unique identifier for the payment initiator"payer_idJfraud
+ŸÑ¥Öà©èëÌÓ¥ÖĞı¿@
+;
+
+__dummy"
+__dummy_idJfraud
+ŸÑ¥Ö¸ïãëÌÓ¥ÖĞñÃ@1"$24367a42-9d3f-4adb-846b-04a2d544f65b*ÌÓ¥Ö¨Ö‚C2µ
+•
+velocityfraudpayer_id"
+
+cnt_1m"
+cnt_10m"
+
+cnt_1h"
+amt_sum_24h"
+secs_since_last"
+distinct_payees_1h2€Æ
+:[event_tsZdata/features.parquet¢data/features.parquet’ËÓ¥ÖğÄ"ÌÓ¥Ö€êí?@J˜	event_ts¢velocity_pushÒ[event_tsZdata/features.parquet¢data/features.parquet’ËÓ¥ÖğÄ"ÌÓ¥Ö€êí?’ËÓ¥Ö°À¢Ä"ÌÓ¥Ö˜Çö?b
+payer_id’latest
+ŸÑ¥Ö€ÇëÌÓ¥Ö°íº@b˜event_tsZdata/features.parquetŠ1feast.infra.offline_stores.file_source.FileSource¢data/features.parquetªfraud’ŸÑ¥ÖĞæÀÛ"ŸÑ¥Öø··ëbÁ	event_tsŠfeast.data_source.PushSource¢velocity_pushªfraudÒ\event_tsZdata/features.parquet¢data/features.parquet’ŸÑ¥ÖĞæÀÛ"ŸÑ¥Öø··ë’ŸÑ¥Ö¨ˆÈÛ"ŸÑ¥ÖøœÀëŠ&
+
+fraud
+ŸÑ¥Ö˜ƒƒÜÌÓ¥ÖˆÇ÷6’æ
+ã
+velocityfraud"feature_view*
+ì
+velocityfraudpayer_id"
+
+cnt_1m"
+cnt_10m"
+
+cnt_1h"
+amt_sum_24h"
+secs_since_last"
+distinct_payees_1h2€Æ
+:event_tsZdata/features.parquetŠ1feast.infra.offline_stores.file_source.FileSource¢data/features.parquet’ŸÑ¥ÖĞæÀÛ"ŸÑ¥Öø··ë@J¹	event_tsŠfeast.data_source.PushSource¢velocity_pushÒ\event_tsZdata/features.parquet¢data/features.parquet’ŸÑ¥ÖĞæÀÛ"ŸÑ¥Öø··ë’ŸÑ¥Ö¨ˆÈÛ"ŸÑ¥ÖøœÀëb
+payer_id’latest
+ŸÑ¥Ö€ÇëŸÑ¥Ö€Çë2ŸÑ¥ÖˆˆáëB$e1b4670d-9072-4699-9092-ea245c439cb7
