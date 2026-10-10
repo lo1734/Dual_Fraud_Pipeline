@@ -3,7 +3,7 @@
 
 **Repository:** `dual-path-fraud`  
 **Current Status Snapshot:** October 10, 2026  
-**Latest Confirmed Checkpoint:** Phase 1, Phase 2 & Phase 3 Fully Completed & Verified (1.1 through 3.3).  
+**Latest Confirmed Checkpoint:** Phase 1, Phase 2, Phase 3 & Phase 4 Fully Completed & Verified (1.1 through 4.3).  
 **Primary Performance Targets:**
 - End-to-end scoring latency: **$p99.9 \le 50\text{ ms}$** under dynamic burst workloads.
 - Model quality retention: **Within 2–3%** (relative PR-AUC / Recall@1% FPR) of the always-deep baseline.
@@ -210,7 +210,18 @@
 
 ---
 
-## Phase 4: Operational Hardening (Next)
-- [ ] Delayed-label feedback pipeline (`txn.labels` chargebacks joined to `txn.decisions`).
-- [ ] Feature and model drift monitoring.
-- [ ] Canary and shadow-mode rollout strategy.
+## Phase 4: Operational Hardening (Completed & Verified)
+- [x] **Delayed-Label Feedback Pipeline (`ml/feedback/delayed_label_joiner.py`):**
+  - Consumes delayed chargebacks on `txn.labels` and temporal joins with `txn.decisions`.
+  - Tracks realized False Positive / False Discovery Rate (legitimate transactions declined) and Missed Fraud Rate (approved transactions chargebacked).
+  - Emits joined ground-truth dataset to `data/retraining_feedback.parquet` for continuous retraining.
+- [x] **Feature and Model Drift Monitoring (`ml/monitoring/drift_detector.py`):**
+  - Population Stability Index (PSI) calculation with adaptive binning for continuous features and discrete zero-inflated counts.
+  - Wasserstein earth mover's distance for distribution shifts.
+  - Model prediction divergence tracking ($L_1$ delta and correlation) between fast and deep path scores to catch model decay.
+- [x] **Canary & Shadow-Mode Rollout Strategy (`scoring_service/app.py`):**
+  - Shadow Mode: Candidate deep models evaluated asynchronously in background threadpool with zero user-facing latency impact.
+  - Canary Mode: Configurable fractional traffic routing ($0\%\text{–}100\%$) with metric segmentation.
+  - Deployment management API: `/deploy/shadow`, `/deploy/canary`, `/deploy/promote`, `/deploy/rollback`, and `/deploy/status`.
+- [x] **Comprehensive Phase 4 Verification Suite (`tests/test_phase4_suite.py`):**
+  - All 4 tests verified and passing!

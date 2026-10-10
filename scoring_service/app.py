@@ -74,6 +74,14 @@ state = {
         deadline_ms=18.0
     ),
     "mode": os.environ.get("SCORING_MODE", "adaptive"),  # 'adaptive', 'always_deep', 'always_fast'
+    "deployment": {
+        "status": "production",        # 'production', 'shadow', 'canary'
+        "canary_traffic_pct": 0.0,     # Percentage (0-100) routed to candidate
+        "candidate_deep_model": None,  # Candidate deep model object
+        "shadow_requests": 0,
+        "shadow_divergences": 0,
+        "canary_requests": 0
+    },
     "metrics": {
         "total_requests": 0,
         "fast_routes": 0,
@@ -252,7 +260,24 @@ async def score_endpoint(txn: TransactionRequest, test_delay_ms: float = 0.0):
 
     SCORING_LATENCY.labels(route=selected_route, action=action).observe(elapsed_ms / 1000.0)
 
-    # 6. Publish decision to Kafka txn.decisions
+    # 5b. Shadow Mode Evaluation (completely non-blocking, evaluates candidate model asynchronously)
+    dep = state["deployment"]
+    if dep["status"] == "shadow" and dep["candidate_deep_model"] is not None:
+        dep["shadow_requests"] += 1
+        async def _eval_shadow(x_c, x_n, prod_score):
+            loop = asyncio.get_running_loop()
+            def _calc():
+                with torch.no_grad():
+                    logits = dep["candidate_deep_model"](torch.tensor(x_c), torch.tensor(x_n))
+                    raw = torch.sigmoid(logits).item()
+                    return float(state["calibrators"]["deep"].predict([raw])[0])
+            cand_score = await loop.run_in_executor(state["executor"], _calc)
+            if abs(cand_score - prod_score) > 0.15:
+                dep["shadow_divergences"] += 1
+
+        asyncio.create_task(_eval_shadow(X_cat, X_num, final_score))
+
+    # 6. Publish decision to Kafka txn.decisions asynchronously
     decision_payload = {
         "txnId": txn.txnId,
         "payerId": txn.payerId,
@@ -264,10 +289,14 @@ async def score_endpoint(txn: TransactionRequest, test_delay_ms: float = 0.0):
         "timestamp": int(time.time() * 1000)
     }
 
-    try:
-        state["kafka_producer"].send(DECISIONS_TOPIC, key=txn.payerId, value=decision_payload)
-    except Exception as e:
-        pass
+    if state["kafka_producer"]:
+        def _send_kafka():
+            try:
+                state["kafka_producer"].send(DECISIONS_TOPIC, key=txn.payerId, value=decision_payload)
+            except Exception:
+                pass
+        loop = asyncio.get_running_loop()
+        loop.run_in_executor(state["executor"], _send_kafka)
 
     return decision_payload
 
@@ -315,6 +344,62 @@ async def reset_metrics_endpoint():
         "total_latency_ms": 0.0
     }
     return {"status": "ok"}
+
+@app.post("/deploy/shadow")
+async def deploy_shadow_endpoint():
+    """Activates Shadow Mode: runs deep model candidate asynchronously without latency impact."""
+    # Clone current deep model as candidate (or load new weights)
+    prep = state["prep"]
+    cat_dims = [len(cat) + 1 for cat in prep["encoder"].categories_]
+    cand = TabularDeepModel(cat_dims=cat_dims, num_dim=len(prep["num_cols"]))
+    cand.load_state_dict(torch.load(os.path.join(ARTIFACTS_DIR, "deep_model.pth"), weights_only=True))
+    cand.eval()
+    state["deployment"]["candidate_deep_model"] = cand
+    state["deployment"]["status"] = "shadow"
+    state["deployment"]["shadow_requests"] = 0
+    state["deployment"]["shadow_divergences"] = 0
+    return {"status": "ok", "deployment": "shadow"}
+
+@app.post("/deploy/canary")
+async def deploy_canary_endpoint(traffic_pct: float = 10.0):
+    """Activates Canary Mode with configured traffic percentage (0-100%)."""
+    if traffic_pct < 0.0 or traffic_pct > 100.0:
+        raise HTTPException(status_code=400, detail="traffic_pct must be between 0 and 100")
+    if state["deployment"]["candidate_deep_model"] is None:
+        # Initialize candidate if not already loaded
+        prep = state["prep"]
+        cat_dims = [len(cat) + 1 for cat in prep["encoder"].categories_]
+        cand = TabularDeepModel(cat_dims=cat_dims, num_dim=len(prep["num_cols"]))
+        cand.load_state_dict(torch.load(os.path.join(ARTIFACTS_DIR, "deep_model.pth"), weights_only=True))
+        cand.eval()
+        state["deployment"]["candidate_deep_model"] = cand
+
+    state["deployment"]["status"] = "canary"
+    state["deployment"]["canary_traffic_pct"] = traffic_pct
+    state["deployment"]["canary_requests"] = 0
+    return {"status": "ok", "deployment": "canary", "traffic_pct": traffic_pct}
+
+@app.post("/deploy/promote")
+async def deploy_promote_endpoint():
+    """Promotes candidate model to active production model."""
+    if state["deployment"]["candidate_deep_model"] is not None:
+        state["deep_model"] = state["deployment"]["candidate_deep_model"]
+        state["deployment"]["candidate_deep_model"] = None
+    state["deployment"]["status"] = "production"
+    state["deployment"]["canary_traffic_pct"] = 0.0
+    return {"status": "ok", "deployment": "promoted_to_production"}
+
+@app.post("/deploy/rollback")
+async def deploy_rollback_endpoint():
+    """Rolls back canary/shadow deployment immediately to baseline."""
+    state["deployment"]["status"] = "production"
+    state["deployment"]["canary_traffic_pct"] = 0.0
+    state["deployment"]["candidate_deep_model"] = None
+    return {"status": "ok", "deployment": "rolled_back_to_baseline"}
+
+@app.get("/deploy/status")
+async def deploy_status_endpoint():
+    return state["deployment"]
 
 # Instrument with Prometheus (exposes /prometheus endpoint for Grafana/Prometheus scraper)
 Instrumentator().instrument(app).expose(app, endpoint="/prometheus")
