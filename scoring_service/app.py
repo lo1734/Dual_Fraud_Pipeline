@@ -38,6 +38,22 @@ class TransactionRequest(BaseModel):
     channel: Optional[str] = "UPI"
     merchantCategory: Optional[str] = "RETAIL"
     ipGeo: Optional[str] = "IN-KA"
+    mode: Optional[str] = None  # Per-request mode override ('always_deep', 'always_fast', 'adaptive')
+
+from prometheus_fastapi_instrumentator import Instrumentator
+from prometheus_client import Counter, Histogram, Gauge
+
+# Prometheus metric collectors
+SCORING_LATENCY = Histogram(
+    "fraud_scoring_latency_seconds",
+    "End-to-end scoring latency in seconds",
+    ["route", "action"],
+    buckets=[0.001, 0.002, 0.005, 0.010, 0.020, 0.035, 0.050, 0.100]
+)
+ROUTE_COUNTER = Counter("fraud_scoring_routes_total", "Count of transactions by route", ["route"])
+FALLBACK_COUNTER = Counter("fraud_scoring_fallbacks_total", "Count of deadline timeouts falling back to fast model")
+INFLIGHT_GAUGE = Gauge("fraud_scoring_inflight_requests", "Current active in-flight deep requests")
+TPS_GAUGE = Gauge("fraud_scoring_current_tps", "Current EWMA TPS estimate")
 
 # Global service state
 state = {
@@ -48,7 +64,16 @@ state = {
     "redis": None,
     "kafka_producer": None,
     "load_state": LoadState(),
-    "router_config": RouterConfig(lo=0.02, hi=0.70, high_value=20000.0, deadline_ms=35.0),
+    "router_config": RouterConfig(
+        lo=0.015,
+        hi=0.80,
+        high_value=20000.0,
+        tps_soft=1000.0,
+        tps_hard=2500.0,
+        inflight_max=64,
+        deadline_ms=18.0
+    ),
+    "mode": os.environ.get("SCORING_MODE", "adaptive"),  # 'adaptive', 'always_deep', 'always_fast'
     "metrics": {
         "total_requests": 0,
         "fast_routes": 0,
@@ -94,6 +119,13 @@ async def startup_event():
         state["kafka_producer"] = None
 
     # Model Warmup to eliminate first-request cold-start latency spike
+    state["num_mean"] = prep["scaler"].mean_.astype(np.float32)
+    state["num_scale"] = prep["scaler"].scale_.astype(np.float32)
+    state["cat_maps"] = [{cat: idx for idx, cat in enumerate(cats)} for cats in prep["encoder"].categories_]
+
+    import concurrent.futures
+    state["executor"] = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+
     warm_num = np.zeros((1, len(prep["num_cols"])), dtype=np.float32)
     warm_cat = np.zeros((1, len(prep["cat_cols"])), dtype=np.int64)
     _ = state["fast_model"].predict_proba(np.hstack([warm_num, warm_cat]))
@@ -107,18 +139,23 @@ async def shutdown_event():
         await state["redis"].aclose()
     if state["kafka_producer"]:
         state["kafka_producer"].close()
+    if state.get("executor"):
+        state["executor"].shutdown(wait=False)
 
-async def async_deep_inference(X_cat, X_num, simulate_delay_ms: float = 0.0) -> float:
-    """Dispatches to deep model with simulated or real network delay."""
-    if simulate_delay_ms > 0:
-        await asyncio.sleep(simulate_delay_ms / 1000.0)
-
-    # In-memory evaluation representing GPU/Triton inference
+def _sync_deep_eval(X_cat, X_num) -> float:
     with torch.no_grad():
         logits = state["deep_model"](torch.tensor(X_cat), torch.tensor(X_num))
         raw = torch.sigmoid(logits).item()
         cal = float(state["calibrators"]["deep"].predict([raw])[0])
         return cal
+
+async def async_deep_inference(X_cat, X_num, simulate_delay_ms: float = 0.0) -> float:
+    """Dispatches to deep model in threadpool without blocking the asyncio loop."""
+    if simulate_delay_ms > 0:
+        await asyncio.sleep(simulate_delay_ms / 1000.0)
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(state["executor"], _sync_deep_eval, X_cat, X_num)
 
 @app.post("/score")
 async def score_endpoint(txn: TransactionRequest, test_delay_ms: float = 0.0):
@@ -144,30 +181,41 @@ async def score_endpoint(txn: TransactionRequest, test_delay_ms: float = 0.0):
     secsSinceLast = float(online_feats[4]) if online_feats[4] is not None else -1.0
     distinctPayees1h = float(online_feats[5]) if online_feats[5] is not None else 0.0
 
-    # 2. Assemble feature vectors
-    prep = state["prep"]
-    num_vals = np.array([[txn.amount, cnt1m, cnt10m, cnt1h, amtSum24h, secsSinceLast, distinctPayees1h]], dtype=np.float32)
-    cat_vals = np.array([[txn.channel, txn.merchantCategory, txn.ipGeo]], dtype=object)
+    # 2. Fast direct vector standardization (< 0.005 ms)
+    raw_num = np.array([txn.amount, cnt1m, cnt10m, cnt1h, amtSum24h, secsSinceLast, distinctPayees1h], dtype=np.float32)
+    norm_num = (raw_num - state["num_mean"]) / state["num_scale"]
+    X_num = norm_num.reshape(1, -1)
 
-    X_num = prep["scaler"].transform(num_vals).astype(np.float32)
-    X_cat = prep["encoder"].transform(cat_vals).astype(np.int64)
-    X_cat[X_cat < 0] = 0
+    cm = state["cat_maps"]
+    c0 = cm[0].get(txn.channel, 0)
+    c1 = cm[1].get(txn.merchantCategory, 0)
+    c2 = cm[2].get(txn.ipGeo, 0)
+    X_cat = np.array([[c0, c1, c2]], dtype=np.int64)
     X_all = np.hstack([X_num, X_cat])
 
     # 3. Fast Model In-Process (< 2 ms)
     fast_raw = state["fast_model"].predict_proba(X_all)[0, 1]
     fast_score = float(state["calibrators"]["fast"].predict([fast_raw])[0])
 
-    # 4. Router Decision
-    decision_route = route(fast_score, txn.amount, state["load_state"], state["router_config"])
+    mode = txn.mode or state.get("mode", "adaptive")
+    if mode == "always_deep":
+        decision_route = "deep"
+    elif mode == "always_fast":
+        decision_route = "fast"
+    else:
+        # Adaptive dual-path routing
+        decision_route = route(fast_score, txn.amount, state["load_state"], state["router_config"])
+
     final_score = fast_score
     selected_route = "fast"
 
     if decision_route in ("deep", "deep_audit"):
         state["load_state"].inflight += 1
+        INFLIGHT_GAUGE.set(state["load_state"].inflight)
         try:
-            # Enforce 35ms hard deadline
-            timeout_sec = state["router_config"].deadline_ms / 1000.0
+            # Enforce hard deadline based on remaining total latency budget
+            elapsed_before_deep = (time.perf_counter() - t_start) * 1000.0
+            timeout_sec = max(0.005, (state["router_config"].deadline_ms - elapsed_before_deep) / 1000.0)
             deep_score = await asyncio.wait_for(
                 async_deep_inference(X_cat, X_num, simulate_delay_ms=test_delay_ms),
                 timeout=timeout_sec
@@ -175,18 +223,24 @@ async def score_endpoint(txn: TransactionRequest, test_delay_ms: float = 0.0):
             final_score = deep_score
             selected_route = decision_route
             state["metrics"]["deep_routes"] += 1
+            ROUTE_COUNTER.labels(route=decision_route).inc()
         except asyncio.TimeoutError:
             # Deadline expired! Return fast-path score immediately
             final_score = fast_score
             selected_route = "fast_fallback"
             state["metrics"]["fallbacks"] += 1
+            ROUTE_COUNTER.labels(route="fast_fallback").inc()
+            FALLBACK_COUNTER.inc()
         finally:
             state["load_state"].inflight -= 1
+            INFLIGHT_GAUGE.set(state["load_state"].inflight)
     else:
         state["metrics"]["fast_routes"] += 1
+        ROUTE_COUNTER.labels(route="fast").inc()
 
     elapsed_ms = (time.perf_counter() - t_start) * 1000.0
     state["metrics"]["total_latency_ms"] += elapsed_ms
+    TPS_GAUGE.set(state["load_state"].tps)
 
     # 5. Determine Business Action
     if final_score < 0.15:
@@ -195,6 +249,8 @@ async def score_endpoint(txn: TransactionRequest, test_delay_ms: float = 0.0):
         action = "REVIEW"
     else:
         action = "DECLINE"
+
+    SCORING_LATENCY.labels(route=selected_route, action=action).observe(elapsed_ms / 1000.0)
 
     # 6. Publish decision to Kafka txn.decisions
     decision_payload = {
@@ -221,6 +277,7 @@ async def metrics_endpoint():
     avg_latency = state["metrics"]["total_latency_ms"] / total
     deep_share = (state["metrics"]["deep_routes"] / total) * 100.0
     return {
+        "mode": state.get("mode", "adaptive"),
         "total_requests": state["metrics"]["total_requests"],
         "fast_routes": state["metrics"]["fast_routes"],
         "deep_routes": state["metrics"]["deep_routes"],
@@ -230,6 +287,37 @@ async def metrics_endpoint():
         "current_tps": round(state["load_state"].tps, 1),
         "current_inflight": state["load_state"].inflight
     }
+
+@app.post("/set_mode")
+async def set_mode_endpoint(mode: str):
+    if mode not in ("adaptive", "always_deep", "always_fast"):
+        raise HTTPException(status_code=400, detail="Invalid mode")
+    state["mode"] = mode
+    # Reset metrics for comparative runs
+    state["metrics"] = {
+        "total_requests": 0,
+        "fast_routes": 0,
+        "deep_routes": 0,
+        "fallbacks": 0,
+        "audit_routes": 0,
+        "total_latency_ms": 0.0
+    }
+    return {"status": "ok", "mode": mode}
+
+@app.post("/reset_metrics")
+async def reset_metrics_endpoint():
+    state["metrics"] = {
+        "total_requests": 0,
+        "fast_routes": 0,
+        "deep_routes": 0,
+        "fallbacks": 0,
+        "audit_routes": 0,
+        "total_latency_ms": 0.0
+    }
+    return {"status": "ok"}
+
+# Instrument with Prometheus (exposes /prometheus endpoint for Grafana/Prometheus scraper)
+Instrumentator().instrument(app).expose(app, endpoint="/prometheus")
 
 @app.get("/health")
 async def health_endpoint():
