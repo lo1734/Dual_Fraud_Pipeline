@@ -269,6 +269,14 @@ python3 benchmarks/open_arrival_benchmark.py --mode adaptive --tps 800 --duratio
 
 # Phase 4: Operational Hardening (Feedback, Drift, Canary, Shadow)
 python3 tests/test_phase4_suite.py
+
+# Phase 5: Implementation Guide Hardening & Chaos Testing
+python3 ml/export_onnx.py
+python3 ml/compile_fast_model.py
+python3 ml/router_ablation.py
+python3 tests/chaos/test_failure_injection.py
+python3 ml/ieee_cis_loader.py
+python3 benchmarks/flink_soak_test.py
 ```
 
 ---
@@ -278,14 +286,20 @@ python3 tests/test_phase4_suite.py
 ```
 dual_path_fraud/
 ├── CHECKLIST.md                            # Comprehensive milestone verification scorecard
-├── README.md                               # Complete master architectural guide (Phases 1-4)
+├── README.md                               # Complete master architectural guide
+├── readme_phase_1_2_3_4.md                 # Full end-to-end evolutionary guide (Phases 1-5)
 ├── benchmarks/
-│   └── open_arrival_benchmark.py           # Coordinated-omission-free Poisson benchmark
+│   ├── flink_soak_report.json              # Long-run Flink state growth metrics
+│   ├── flink_soak_test.py                  # Flink checkpoint soak monitor
+│   ├── open_arrival_benchmark.py           # Coordinated-omission-free Poisson benchmark
+│   └── router_ablation_results.json        # Formal router Pareto evaluation metrics
 ├── data/
 │   ├── train.parquet                       # Temporal training split (50k records)
 │   ├── val.parquet                         # Temporal validation split
 │   ├── test.parquet                        # Temporal out-of-time test split
-│   └── retraining_feedback.parquet         # Joined delayed feedback dataset
+│   ├── retraining_feedback.parquet         # Joined delayed feedback dataset
+│   └── ieee_cis/
+│       └── ieee_cis_processed.parquet      # Real-world IEEE-CIS entity proxy dataset
 ├── flink-job/
 │   ├── pom.xml                             # Flink 1.19 Maven build configuration
 │   └── src/main/java/com/fraud/
@@ -294,26 +308,39 @@ dual_path_fraud/
 │       ├── models/                         # Transaction & Feature Java POJOs
 │       └── sinks/                          # Redis & Kafka serialization sinks
 ├── infrastructure/
-│   ├── docker-compose.yml                  # Kafka, Redis, Flink, Prometheus, Grafana
+│   ├── docker-compose.yml                  # Kafka, Redis, Flink, Prometheus, Grafana, Triton
 │   ├── prometheus.yml                      # Prometheus scrape target configuration
 │   └── dashboards/
 │       └── fraud_dashboard.json            # Pre-configured Grafana monitoring dashboard
 ├── ml/
 │   ├── artifacts/
 │   │   ├── fast_model.pkl                  # Serialized LightGBM fast path
+│   │   ├── fast_model_compiled.pkl         # In-process compiled fast tree model (<0.12ms p99.9)
 │   │   ├── deep_model.pth                  # Serialized PyTorch tabular weights
+│   │   ├── deep_model.onnx                 # Dynamic batching ONNX export for Triton
 │   │   ├── calibrators.pkl                 # Isotonic calibration models
 │   │   └── preprocessor.pkl                # Standard scalers and category maps
 │   ├── feedback/
 │   │   └── delayed_label_joiner.py         # Delayed-label feedback join engine (Phase 4)
 │   ├── monitoring/
 │   │   └── drift_detector.py               # Adaptive PSI & Wasserstein drift detector (Phase 4)
+│   ├── compile_fast_model.py               # Fast tree compiler runtime
+│   ├── export_onnx.py                      # ONNX dynamic batching exporter & parity validator
+│   ├── ieee_cis_loader.py                  # Real-world IEEE-CIS compound proxy pipeline
 │   ├── models.py                           # PyTorch TabularDeepModel definition
 │   ├── router.py                           # Adaptive router logic & Pareto sweep
-│   └── train_models.py                     # Dual-path model training pipeline
+│   ├── router_ablation.py                  # Formal cost vs. quality router ablation engine
+│   ├── train_models.py                     # Dual-path model training pipeline
+│   └── triton_client.py                    # Triton client with queue monitoring & local ORT fallback
 ├── scoring_service/
 │   └── app.py                              # FastAPI real-time scoring microservice & canary controller
+├── triton_models/
+│   └── deep_fraud/
+│       ├── config.pbtxt                    # Triton dynamic batching configuration
+│       └── 1/model.onnx                    # Production ONNX model repository
 └── tests/
+    ├── chaos/
+    │   └── test_failure_injection.py       # Chaos & outage injection test suite
     ├── k6/
     │   └── load_test_open_arrival.js       # k6 open-model load test script
     ├── test_feature_parity.py              # Zero train/serve skew verification

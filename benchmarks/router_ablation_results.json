@@ -1,0 +1,124 @@
+{
+  "deep_baseline": {
+    "pr_auc": 0.17513294191693857,
+    "recall_1pct": 0.23668639053254437
+  },
+  "fast_baseline": {
+    "pr_auc": 0.13441339370847982,
+    "recall_1pct": 0.17751479289940827
+  },
+  "ablations": [
+    {
+      "variant": "Confidence-Only",
+      "param": "delta=0.10",
+      "deep_share_pct": 1.0,
+      "pr_auc": 0.1232,
+      "recall_1pct_fpr": 18.93,
+      "retention_pct": 70.34
+    },
+    {
+      "variant": "Confidence-Only",
+      "param": "delta=0.20",
+      "deep_share_pct": 1.4,
+      "pr_auc": 0.1323,
+      "recall_1pct_fpr": 18.34,
+      "retention_pct": 75.56
+    },
+    {
+      "variant": "Confidence-Only",
+      "param": "delta=0.35",
+      "deep_share_pct": 1.7,
+      "pr_auc": 0.1392,
+      "recall_1pct_fpr": 17.75,
+      "retention_pct": 79.47
+    },
+    {
+      "variant": "Confidence-Only",
+      "param": "delta=0.45",
+      "deep_share_pct": 16.1,
+      "pr_auc": 0.1637,
+      "recall_1pct_fpr": 27.22,
+      "retention_pct": 93.45
+    },
+    {
+      "variant": "Amount-Only",
+      "param": "amount>=500",
+      "deep_share_pct": 28.6,
+      "pr_auc": 0.1316,
+      "recall_1pct_fpr": 23.67,
+      "retention_pct": 75.12
+    },
+    {
+      "variant": "Amount-Only",
+      "param": "amount>=1000",
+      "deep_share_pct": 13.2,
+      "pr_auc": 0.1305,
+      "recall_1pct_fpr": 23.67,
+      "retention_pct": 74.52
+    },
+    {
+      "variant": "Amount-Only",
+      "param": "amount>=5000",
+      "deep_share_pct": 0.8,
+      "pr_auc": 0.1098,
+      "recall_1pct_fpr": 15.38,
+      "retention_pct": 62.69
+    },
+    {
+      "variant": "Amount-Only",
+      "param": "amount>=20000",
+      "deep_share_pct": 0.0,
+      "pr_auc": 0.1256,
+      "recall_1pct_fpr": 17.75,
+      "retention_pct": 71.71
+    },
+    {
+      "variant": "Load-Only (Random)",
+      "param": "prob=20%",
+      "deep_share_pct": 20.4,
+      "pr_auc": 0.1322,
+      "recall_1pct_fpr": 17.16,
+      "retention_pct": 75.5
+    },
+    {
+      "variant": "Load-Only (Random)",
+      "param": "prob=40%",
+      "deep_share_pct": 39.3,
+      "pr_auc": 0.15,
+      "recall_1pct_fpr": 19.53,
+      "retention_pct": 85.66
+    },
+    {
+      "variant": "Load-Only (Random)",
+      "param": "prob=60%",
+      "deep_share_pct": 59.7,
+      "pr_auc": 0.1453,
+      "recall_1pct_fpr": 24.26,
+      "retention_pct": 82.97
+    },
+    {
+      "variant": "Combined Adaptive (Ours)",
+      "param": "[0.02, 0.70] + high-val",
+      "deep_share_pct": 37.8,
+      "pr_auc": 0.1828,
+      "recall_1pct_fpr": 25.44,
+      "retention_pct": 104.35
+    },
+    {
+      "variant": "Combined Adaptive (Ours)",
+      "param": "[0.02, 0.60] + high-val",
+      "deep_share_pct": 37.4,
+      "pr_auc": 0.1688,
+      "recall_1pct_fpr": 26.63,
+      "retention_pct": 96.37
+    },
+    {
+      "variant": "Combined Adaptive (Ours)",
+      "param": "[0.04, 0.50] + high-val",
+      "deep_share_pct": 29.1,
+      "pr_auc": 0.1621,
+      "recall_1pct_fpr": 26.63,
+      "retention_pct": 92.55
+    }
+  ]
+}

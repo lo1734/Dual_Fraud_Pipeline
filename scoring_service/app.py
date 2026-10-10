@@ -100,16 +100,31 @@ async def startup_event():
         state["prep"] = pickle.load(f)
     with open(os.path.join(ARTIFACTS_DIR, "fast_model.pkl"), "rb") as f:
         state["fast_model"] = pickle.load(f)
+
+    # Load Compiled Fast Model if available
+    compiled_fast_path = os.path.join(ARTIFACTS_DIR, "fast_model_compiled.pkl")
+    if os.path.exists(compiled_fast_path):
+        try:
+            with open(compiled_fast_path, "rb") as f:
+                state["compiled_fast_model"] = pickle.load(f)
+        except Exception:
+            state["compiled_fast_model"] = None
+    else:
+        state["compiled_fast_model"] = None
+
     with open(os.path.join(ARTIFACTS_DIR, "calibrators.pkl"), "rb") as f:
         state["calibrators"] = pickle.load(f)
 
-    # Load Deep PyTorch Model
+    # Load Deep PyTorch Model & Triton Client
     prep = state["prep"]
     cat_dims = [len(cat) + 1 for cat in prep["encoder"].categories_]
     deep = TabularDeepModel(cat_dims=cat_dims, num_dim=len(prep["num_cols"]))
     deep.load_state_dict(torch.load(os.path.join(ARTIFACTS_DIR, "deep_model.pth"), weights_only=True))
     deep.eval()
     state["deep_model"] = deep
+
+    from ml.triton_client import TritonClient
+    state["triton_client"] = TritonClient()
 
     # Connect to Async Redis
     state["redis"] = aioredis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
@@ -139,7 +154,7 @@ async def startup_event():
     _ = state["fast_model"].predict_proba(np.hstack([warm_num, warm_cat]))
     with torch.no_grad():
         _ = state["deep_model"](torch.tensor(warm_cat), torch.tensor(warm_num))
-    print("Scoring Service successfully initialized with models warmed up.")
+    print("Scoring Service successfully initialized with models and Triton client warmed up.")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -151,11 +166,16 @@ async def shutdown_event():
         state["executor"].shutdown(wait=False)
 
 def _sync_deep_eval(X_cat, X_num) -> float:
-    with torch.no_grad():
-        logits = state["deep_model"](torch.tensor(X_cat), torch.tensor(X_num))
-        raw = torch.sigmoid(logits).item()
-        cal = float(state["calibrators"]["deep"].predict([raw])[0])
-        return cal
+    if state.get("triton_client") and state["triton_client"].ort_session is not None:
+        ort_inputs = {"x_cat": X_cat.astype(np.int64), "x_num": X_num.astype(np.float32)}
+        logits = state["triton_client"].ort_session.run(None, ort_inputs)[0]
+        raw = float(1.0 / (1.0 + np.exp(-logits[0])))
+    else:
+        with torch.no_grad():
+            logits = state["deep_model"](torch.tensor(X_cat), torch.tensor(X_num))
+            raw = float(torch.sigmoid(logits).item())
+    cal = float(state["calibrators"]["deep"].predict([raw])[0])
+    return cal
 
 async def async_deep_inference(X_cat, X_num, simulate_delay_ms: float = 0.0) -> float:
     """Dispatches to deep model in threadpool without blocking the asyncio loop."""
@@ -201,8 +221,11 @@ async def score_endpoint(txn: TransactionRequest, test_delay_ms: float = 0.0):
     X_cat = np.array([[c0, c1, c2]], dtype=np.int64)
     X_all = np.hstack([X_num, X_cat])
 
-    # 3. Fast Model In-Process (< 2 ms)
-    fast_raw = state["fast_model"].predict_proba(X_all)[0, 1]
+    # 3. Fast Model In-Process (< 1 ms via Compiled Booster)
+    if state.get("compiled_fast_model") is not None:
+        fast_raw = float(state["compiled_fast_model"].predict_proba_fast(X_all)[0])
+    else:
+        fast_raw = float(state["fast_model"].predict_proba(X_all)[0, 1])
     fast_score = float(state["calibrators"]["fast"].predict([fast_raw])[0])
 
     mode = txn.mode or state.get("mode", "adaptive")

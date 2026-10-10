@@ -106,14 +106,16 @@ def test_2_feature_and_model_drift_monitoring():
     assert divergence_drift["divergence_alert"]
     print("✅ Model score divergence successfully caught prediction mismatch.")
 
-def test_3_shadow_mode_execution():
+async def test_3_shadow_mode_execution(client):
     """
     Test 3: Verifies Shadow Mode activation, ensuring candidate deep model
     is evaluated asynchronously with zero latency penalty on live responses.
     """
     print("\n--- Test 3: Shadow Mode Asynchronous Execution ---")
     # Activate shadow mode
-    r_shadow = requests.post(f"{BASE_URL}/deploy/shadow").json()
+    res_shadow = await client.post("/deploy/shadow")
+    assert res_shadow.status_code == 200
+    r_shadow = res_shadow.json()
     assert r_shadow["status"] == "ok"
     assert r_shadow["deployment"] == "shadow"
 
@@ -130,60 +132,83 @@ def test_3_shadow_mode_execution():
     }
 
     t0 = time.perf_counter()
-    resp = requests.post(f"{BASE_URL}/score", json=test_req).json()
+    res_score = await client.post("/score", json=test_req)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    assert res_score.status_code == 200
+    resp = res_score.json()
 
     print(f"Shadow request live response: {resp} (took {elapsed_ms:.2f} ms)")
     assert resp["txnId"] == test_req["txnId"]
     assert elapsed_ms < 50.0, f"Shadow mode request took too long: {elapsed_ms} ms (SLO is 50.0 ms)"
 
     # Check shadow telemetry after short async execution
-    time.sleep(0.1)
-    status = requests.get(f"{BASE_URL}/deploy/status").json()
+    import asyncio
+    await asyncio.sleep(0.1)
+    res_status = await client.get("/deploy/status")
+    assert res_status.status_code == 200
+    status = res_status.json()
     print("Deployment Status after shadow request:", status)
     assert status["shadow_requests"] >= 1
     print("✅ Shadow Mode executed asynchronously without user-facing latency impact.")
 
-def test_4_canary_routing_and_rollback():
+async def test_4_canary_routing_and_rollback(client):
     """
     Test 4: Verifies Canary Mode traffic allocation, promotion, and instant rollback.
     """
     print("\n--- Test 4: Canary Traffic Allocation & Rollback Controller ---")
     # 1. Activate Canary mode with 25% traffic
-    r_canary = requests.post(f"{BASE_URL}/deploy/canary", params={"traffic_pct": 25.0}).json()
+    res_canary = await client.post("/deploy/canary", params={"traffic_pct": 25.0})
+    assert res_canary.status_code == 200
+    r_canary = res_canary.json()
     assert r_canary["status"] == "ok"
     assert r_canary["traffic_pct"] == 25.0
 
-    status = requests.get(f"{BASE_URL}/deploy/status").json()
+    res_status = await client.get("/deploy/status")
+    status = res_status.json()
     assert status["status"] == "canary"
     assert status["canary_traffic_pct"] == 25.0
 
     # 2. Verify Promote to Production
-    r_promote = requests.post(f"{BASE_URL}/deploy/promote").json()
+    res_promote = await client.post("/deploy/promote")
+    assert res_promote.status_code == 200
+    r_promote = res_promote.json()
     assert r_promote["status"] == "ok"
     assert r_promote["deployment"] == "promoted_to_production"
 
-    status = requests.get(f"{BASE_URL}/deploy/status").json()
+    res_status = await client.get("/deploy/status")
+    status = res_status.json()
     assert status["status"] == "production"
     assert status["canary_traffic_pct"] == 0.0
 
     # 3. Verify Rollback back to Baseline
-    r_rollback = requests.post(f"{BASE_URL}/deploy/rollback").json()
+    res_rollback = await client.post("/deploy/rollback")
+    assert res_rollback.status_code == 200
+    r_rollback = res_rollback.json()
     assert r_rollback["status"] == "ok"
     assert r_rollback["deployment"] == "rolled_back_to_baseline"
 
-    status = requests.get(f"{BASE_URL}/deploy/status").json()
+    res_status = await client.get("/deploy/status")
+    status = res_status.json()
     assert status["status"] == "production"
     print("✅ Canary deployment, promotion, and instant rollback verified successfully.")
 
+async def run_async_tests():
+    from httpx import AsyncClient, ASGITransport
+    from scoring_service.app import app, startup_event, shutdown_event
+    await startup_event()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await test_3_shadow_mode_execution(client)
+        await test_4_canary_routing_and_rollback(client)
+    await shutdown_event()
+
 def main():
+    import asyncio
     print("=" * 80)
     print("PHASE 4 COMPREHENSIVE OPERATIONAL HARDENING VERIFICATION SUITE")
     print("=" * 80)
     test_1_delayed_label_feedback_pipeline()
     test_2_feature_and_model_drift_monitoring()
-    test_3_shadow_mode_execution()
-    test_4_canary_routing_and_rollback()
+    asyncio.run(run_async_tests())
     print("\n" + "=" * 80)
     print("🎉 ALL PHASE 4 VERIFICATION TESTS PASSED SUCCESSFULLY!")
     print("=" * 80)

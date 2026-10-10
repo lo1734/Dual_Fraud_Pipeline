@@ -1,0 +1,36 @@
+name: "deep_fraud"
+platform: "onnxruntime_onnx"
+max_batch_size: 32
+
+input [
+  {
+    name: "x_cat"
+    data_type: TYPE_INT64
+    dims: [ 3 ]
+  },
+  {
+    name: "x_num"
+    data_type: TYPE_FP32
+    dims: [ 7 ]
+  }
+]
+
+output [
+  {
+    name: "logits"
+    data_type: TYPE_FP32
+    dims: [ 1 ]
+  }
+]
+
+dynamic_batching {
+  preferred_batch_size: [ 8, 16, 32 ]
+  max_queue_delay_microseconds: 2000
+}
+
+instance_group [
+  {
+    count: 2
+    kind: KIND_CPU
+  }
+]

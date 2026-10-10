@@ -93,3 +93,14 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
     depends_on:
       - prometheus
+
+  triton:
+    image: nvcr.io/nvidia/tritonserver:24.02-py3
+    container_name: fraud-triton
+    command: ["tritonserver", "--model-repository=/models", "--strict-model-config=false"]
+    ports:
+      - "8001:8001"  # gRPC
+      - "8002:8002"  # HTTP Metrics
+      - "8003:8000"  # HTTP Inference (mapped to 8003 to prevent conflict with 8000)
+    volumes:
+      - ../triton_models:/models:ro
